@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/rooneyouma/smart-term/internal/model"
+	"github.com/rooneyouma/sterm/internal/model"
 )
 
 // ParseZsh reads a zsh history file. Commands without a timestamp get

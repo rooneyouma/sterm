@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
-
-	"github.com/rooneyouma/smart-term/internal/model"
+	"unicode/utf8"
+	"github.com/rooneyouma/sterm/internal/model"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver; we never call it directly
 )
 
@@ -62,7 +63,8 @@ func (s *Store) Close() error { return s.db.Close() }
 
 // Insert saves one command.
 func (s *Store) Insert(c model.Command) error {
-	_, err := s.db.Exec(insertSQL, c.Cmd, c.Cwd, c.Repo, c.ExitCode, c.Time.Unix())
+	cmd := strings.TrimRight(c.Cmd, " \t\r\n")
+	_, err := s.db.Exec(insertSQL, cmd, c.Cwd, c.Repo, c.ExitCode, c.Time.Unix())
 	if err != nil {
 		return fmt.Errorf("insert: %w", err)
 	}
@@ -75,7 +77,7 @@ func (s *Store) InsertMany(cmds []model.Command) error {
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
-	defer tx.Rollback() // does nothing if Commit already succeeded
+	defer tx.Rollback()
 
 	stmt, err := tx.Prepare(insertSQL)
 	if err != nil {
@@ -84,7 +86,8 @@ func (s *Store) InsertMany(cmds []model.Command) error {
 	defer stmt.Close()
 
 	for _, c := range cmds {
-		if _, err := stmt.Exec(c.Cmd, c.Cwd, c.Repo, c.ExitCode, c.Time.Unix()); err != nil {
+		cmd := strings.TrimRight(c.Cmd, " \t\r\n")
+		if _, err := stmt.Exec(cmd, c.Cwd, c.Repo, c.ExitCode, c.Time.Unix()); err != nil {
 			return fmt.Errorf("insert: %w", err)
 		}
 	}
@@ -111,6 +114,39 @@ func (s *Store) Recent(limit int) ([]model.Command, error) {
 		}
 		c.Time = time.Unix(ts, 0)
 		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+// PrefixMatches returns distinct commands that start with prefix, best first.
+// The exact prefix itself is excluded, since there'd be nothing left to suggest.
+func (s *Store) PrefixMatches(prefix string, limit int) ([]model.Match, error) {
+	if prefix == "" {
+		return nil, nil
+	}
+
+	rows, err := s.db.Query(`
+		SELECT cmd, COUNT(*) AS n, MAX(ts) AS last
+		FROM history
+		WHERE substr(cmd, 1, ?) = ? AND cmd != ?
+		GROUP BY cmd
+		ORDER BY n DESC, last DESC
+		LIMIT ?`,
+		utf8.RuneCountInString(prefix), prefix, prefix, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("prefix query: %w", err)
+	}
+	defer rows.Close()
+
+	var out []model.Match
+	for rows.Next() {
+		var m model.Match
+		var last int64
+		if err := rows.Scan(&m.Cmd, &m.Count, &last); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		m.Last = time.Unix(last, 0)
+		out = append(out, m)
 	}
 	return out, rows.Err()
 }
