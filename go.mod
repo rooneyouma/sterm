@@ -1,4 +1,4 @@
-module github.com/rooneyouma/smart-term
+module github.com/rooneyouma/sterm
 
 go 1.26.0
 
