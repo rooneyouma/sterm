@@ -1,0 +1,4 @@
+sterm
+*.db
+*.db-wal
+*.db-shm
