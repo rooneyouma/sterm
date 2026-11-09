@@ -1,4 +1,4 @@
-sterm
+/sterm
 *.db
 *.db-wal
 *.db-shm

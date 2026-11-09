@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
 	"github.com/rooneyouma/sterm/internal/model"
 	_ "modernc.org/sqlite" // registers the "sqlite" driver; we never call it directly
 )
@@ -117,21 +118,31 @@ func (s *Store) Recent(limit int) ([]model.Command, error) {
 	}
 	return out, rows.Err()
 }
-// PrefixMatches returns distinct commands that start with prefix, best first.
-// The exact prefix itself is excluded, since there'd be nothing left to suggest.
-func (s *Store) PrefixMatches(prefix string, limit int) ([]model.Match, error) {
+
+// PrefixMatches returns up to limit distinct commands that start with prefix,
+// with usage stats measured against the current directory and git repo.
+// Commands used in this directory or repo come first, but the final order is
+// decided by the rank package. The exact prefix itself is excluded.
+func (s *Store) PrefixMatches(prefix, cwd, repo string, limit int) ([]model.Match, error) {
 	if prefix == "" {
 		return nil, nil
 	}
 
 	rows, err := s.db.Query(`
-		SELECT cmd, COUNT(*) AS n, MAX(ts) AS last
+		SELECT cmd,
+		       COUNT(*) AS n,
+		       MAX(ts) AS last,
+		       SUM(CASE WHEN ? != '' AND cwd = ?  THEN 1 ELSE 0 END) AS dir_n,
+		       SUM(CASE WHEN ? != '' AND repo = ? THEN 1 ELSE 0 END) AS repo_n,
+		       SUM(CASE WHEN exit_code != 0 THEN 1 ELSE 0 END) AS fails
 		FROM history
 		WHERE substr(cmd, 1, ?) = ? AND cmd != ?
 		GROUP BY cmd
-		ORDER BY n DESC, last DESC
+		ORDER BY dir_n DESC, repo_n DESC, n DESC, last DESC
 		LIMIT ?`,
-		utf8.RuneCountInString(prefix), prefix, prefix, limit,
+		cwd, cwd, repo, repo,
+		utf8.RuneCountInString(prefix), prefix, prefix,
+		limit,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("prefix query: %w", err)
@@ -142,7 +153,7 @@ func (s *Store) PrefixMatches(prefix string, limit int) ([]model.Match, error) {
 	for rows.Next() {
 		var m model.Match
 		var last int64
-		if err := rows.Scan(&m.Cmd, &m.Count, &last); err != nil {
+		if err := rows.Scan(&m.Cmd, &m.Count, &last, &m.DirCount, &m.RepoCount, &m.Failures); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		m.Last = time.Unix(last, 0)

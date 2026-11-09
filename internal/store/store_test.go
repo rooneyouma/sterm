@@ -59,7 +59,7 @@ func TestPrefixMatches(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := s.PrefixMatches(tt.prefix, 10)
+			got, err := s.PrefixMatches(tt.prefix, "", "", 10)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -79,7 +79,7 @@ func TestPrefixMatchesWildcardsAreLiteral(t *testing.T) {
 	s := newTestStore(t)
 	seed(t, s, "ls _x", "ls abc")
 
-	got, err := s.PrefixMatches("ls _", 10)
+	got, err := s.PrefixMatches("ls _", "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +92,46 @@ func TestTrailingWhitespaceIsTrimmed(t *testing.T) {
 	s := newTestStore(t)
 	seed(t, s, "git status ", "git status", "git status\t")
 
-	got, err := s.PrefixMatches("git ", 10)
+	got, err := s.PrefixMatches("git ", "", "", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 || got[0].Cmd != "git status" || got[0].Count != 3 {
 		t.Errorf("want one 'git status' x3, got %+v", got)
+	}
+}
+
+func TestPrefixMatchesStats(t *testing.T) {
+	s := newTestStore(t)
+	base := time.Unix(1_700_000_000, 0)
+	rows := []model.Command{
+		{Cmd: "make test", Cwd: "/a", Repo: "/a", ExitCode: 0, Time: base},
+		{Cmd: "make test", Cwd: "/a", Repo: "/a", ExitCode: 2, Time: base.Add(1 * time.Second)},
+		{Cmd: "make test", Cwd: "/b", Repo: "/b", ExitCode: 0, Time: base.Add(2 * time.Second)},
+	}
+	for _, c := range rows {
+		if err := s.Insert(c); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := s.PrefixMatches("make ", "/a", "/a", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d matches, want 1", len(got))
+	}
+	m := got[0]
+	if m.Count != 3 || m.DirCount != 2 || m.RepoCount != 2 || m.Failures != 1 {
+		t.Errorf("stats wrong: %+v", m)
+	}
+
+	got, err = s.PrefixMatches("make ", "", "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].DirCount != 0 || got[0].RepoCount != 0 {
+		t.Errorf("empty context should give zero boosts, got %+v", got[0])
 	}
 }
