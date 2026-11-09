@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,6 +26,11 @@ CREATE TABLE IF NOT EXISTS history (
 CREATE INDEX IF NOT EXISTS idx_history_cmd ON history(cmd);
 CREATE INDEX IF NOT EXISTS idx_history_ts  ON history(ts);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_history_cmd_ts ON history(cmd, ts);
+CREATE TABLE IF NOT EXISTS ask_cache (
+	key     TEXT PRIMARY KEY,
+	command TEXT NOT NULL,
+	ts      INTEGER NOT NULL
+);
 `
 
 const insertSQL = `INSERT OR IGNORE INTO history (cmd, cwd, repo, exit_code, ts) VALUES (?, ?, ?, ?, ?)`
@@ -185,4 +191,29 @@ func (s *Store) PrefixMatches(prefix, cwd, repo string, limit int) ([]model.Matc
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+// GetAsk returns a cached answer for key, if there is one.
+func (s *Store) GetAsk(key string) (string, bool, error) {
+	var cmd string
+	err := s.db.QueryRow(`SELECT command FROM ask_cache WHERE key = ?`, key).Scan(&cmd)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("get ask: %w", err)
+	}
+	return cmd, true, nil
+}
+
+// PutAsk saves (or replaces) the answer for key.
+func (s *Store) PutAsk(key, cmd string) error {
+	_, err := s.db.Exec(
+		`INSERT OR REPLACE INTO ask_cache (key, command, ts) VALUES (?, ?, ?)`,
+		key, cmd, time.Now().Unix(),
+	)
+	if err != nil {
+		return fmt.Errorf("put ask: %w", err)
+	}
+	return nil
 }

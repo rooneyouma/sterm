@@ -111,3 +111,70 @@ bindkey '^[OC' _sterm_forward_char   # right arrow (application mode)
 bindkey '^E'   _sterm_end_of_line    # Ctrl-E
 bindkey '^[[F' _sterm_end_of_line    # End
 bindkey '^[OF' _sterm_end_of_line    # End (application mode)
+
+# ---------- Daemon ----------
+# Start the background suggestion server if it isn't running (does nothing otherwise).
+sterm daemon start &>/dev/null &!
+
+# ---------- Natural language ----------
+_sterm_nl() {
+  local req=$BUFFER
+  local backend=""
+  local -a backend_args
+
+  if [[ $req =~ '^## --(anthropic|openai|gemini|openrouter|ollama)[[:space:]]+(.+)$' ]]; then
+    backend=$match[1]
+    req=$match[2]
+  elif [[ $req == '## --'* ]]; then
+    zle -M "sterm: use ## --provider followed by a request (provider: anthropic, openai, gemini, openrouter, ollama)"
+    return 1
+  elif [[ $req == '## '* ]]; then
+    req=${req#'## '}
+  elif [[ $req == '# '* ]]; then
+    req=${req#'# '}
+  fi
+
+  [[ -n ${req//[[:space:]]/} ]] || return 0
+  [[ -n $backend ]] && backend_args=(--backend="$backend")
+
+  zle -R "sterm: thinking... (Ctrl-C to cancel)"
+  local errf out msg rc
+  errf=$(mktemp) || return 1
+  out=$(sterm ask "${backend_args[@]}" --shell=zsh --cwd="$PWD" -- "$req" 2>$errf)
+  rc=$?
+  msg=$(<$errf)
+  rm -f $errf
+
+  if (( rc != 0 )) || [[ -z $out ]]; then
+    zle -M "sterm: ${msg:-no answer}"
+    return 1
+  fi
+
+  if [[ $out == *$'\n'* ]]; then
+    BUFFER=""
+    CURSOR=0
+    zle -I
+    print -r -- "$out"
+    zle -R
+    zle -M "sterm: research answer printed above"
+    return 0
+  fi
+
+  BUFFER=$out
+  CURSOR=${#BUFFER}
+  zle -M "Review command in the buffer, then press Enter to run it or edit it first."
+  [[ -n $msg ]] && zle -M "$msg"
+  return 0
+}
+
+_sterm_accept_line() {
+  if [[ $BUFFER == '## '* || $BUFFER == '# '* ]]; then
+    _sterm_nl
+  else
+    zle .accept-line
+  fi
+}
+
+zle -N _sterm_nl
+zle -N accept-line _sterm_accept_line
+bindkey '^G' _sterm_nl

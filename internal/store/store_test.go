@@ -135,3 +135,23 @@ func TestPrefixMatchesStats(t *testing.T) {
 		t.Errorf("empty context should give zero boosts, got %+v", got[0])
 	}
 }
+
+func TestAskCache(t *testing.T) {
+	s := newTestStore(t)
+
+	if _, ok, err := s.GetAsk("k"); err != nil || ok {
+		t.Fatalf("empty cache: ok=%v err=%v", ok, err)
+	}
+	if err := s.PutAsk("k", "ls -la"); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := s.GetAsk("k"); err != nil || !ok || got != "ls -la" {
+		t.Errorf("GetAsk = %q, %v, %v", got, ok, err)
+	}
+	if err := s.PutAsk("k", "pwd"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := s.GetAsk("k"); got != "pwd" {
+		t.Errorf("Put should replace the old answer, got %q", got)
+	}
+}

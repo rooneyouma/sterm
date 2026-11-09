@@ -42,7 +42,7 @@ func main() {
 	case "daemon":
 		err = runDaemon(os.Args[2:])
 	case "ask":
-		fmt.Println("ask is not implemented yet")
+		err = runAsk(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command: %s\n", os.Args[1])
 		usage()
