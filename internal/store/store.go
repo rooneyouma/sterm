@@ -119,6 +119,31 @@ func (s *Store) Recent(limit int) ([]model.Command, error) {
 	return out, rows.Err()
 }
 
+// Since returns every command with an id greater than afterID, oldest first.
+// The daemon uses it to load history at startup and to pick up new rows.
+func (s *Store) Since(afterID int64) ([]model.Command, error) {
+	rows, err := s.db.Query(
+		`SELECT id, cmd, cwd, repo, exit_code, ts FROM history WHERE id > ? ORDER BY id`,
+		afterID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query since: %w", err)
+	}
+	defer rows.Close()
+
+	var out []model.Command
+	for rows.Next() {
+		var c model.Command
+		var ts int64
+		if err := rows.Scan(&c.ID, &c.Cmd, &c.Cwd, &c.Repo, &c.ExitCode, &ts); err != nil {
+			return nil, fmt.Errorf("scan: %w", err)
+		}
+		c.Time = time.Unix(ts, 0)
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // PrefixMatches returns up to limit distinct commands that start with prefix,
 // with usage stats measured against the current directory and git repo.
 // Commands used in this directory or repo come first, but the final order is

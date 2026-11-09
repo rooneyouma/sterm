@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/rooneyouma/sterm/internal/daemon"
 	"github.com/rooneyouma/sterm/internal/filter"
 	"github.com/rooneyouma/sterm/internal/importer"
 	"github.com/rooneyouma/sterm/internal/model"
@@ -38,6 +39,8 @@ func main() {
 		err = runImport(os.Args[2:])
 	case "query":
 		err = runQuery(os.Args[2:])
+	case "daemon":
+		err = runDaemon(os.Args[2:])
 	case "ask":
 		fmt.Println("ask is not implemented yet")
 	default:
@@ -53,7 +56,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: sterm <version|record|recent|import|query|ask>")
+	fmt.Fprintln(os.Stderr, "usage: sterm <version|record|recent|import|query|daemon|ask>")
 }
 
 func openStore() (*store.Store, error) {
@@ -187,11 +190,31 @@ func runQuery(args []string) error {
 	cwdFlag := fs.String("cwd", "", "current directory (default: actual current directory)")
 	repoFlag := fs.String("repo", "", "git repo root (default: detected from cwd)")
 	limit := fs.Int("limit", 1, "how many suggestions to print")
-	explain := fs.Bool("explain", false, "show scores, for debugging")
+	explain := fs.Bool("explain", false, "show scores, for debugging (reads the database directly)")
+	direct := fs.Bool("direct", false, "skip the daemon and read the database directly")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
 	cwd, gitRoot := resolveContext(*cwdFlag, *repoFlag)
+
+	if !*direct && !*explain {
+		if dbPath, err := store.DefaultPath(); err == nil {
+			resp, err := daemon.Do(daemon.SocketPath(dbPath), daemon.Request{
+				Op:     "query",
+				Buffer: *buffer,
+				Cwd:    cwd,
+				Repo:   gitRoot,
+				Limit:  *limit,
+			})
+			if err == nil {
+				for _, c := range resp.Suggestions {
+					fmt.Println(c)
+				}
+				return nil
+			}
+		}
+	}
 
 	s, err := openStore()
 	if err != nil {
